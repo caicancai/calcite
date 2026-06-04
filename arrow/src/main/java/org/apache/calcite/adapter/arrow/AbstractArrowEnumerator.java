@@ -84,7 +84,7 @@ abstract class AbstractArrowEnumerator implements Enumerator<Object> {
    * <p>For {@link TimeStampVector}, converts the raw value to
    * milliseconds since epoch, which is the representation used by
    * Calcite's Enumerable runtime for TIMESTAMP types. */
-  private static Object getValue(ValueVector vector, int index) {
+  protected static Object getValue(ValueVector vector, int index) {
     if (vector instanceof TimeStampVector) {
       if (vector.isNull(index)) {
         return null;

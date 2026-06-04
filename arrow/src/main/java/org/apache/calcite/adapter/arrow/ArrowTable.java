@@ -38,15 +38,9 @@ import org.apache.calcite.schema.impl.AbstractTableQueryable;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Util;
 
-import org.apache.arrow.gandiva.evaluator.Filter;
-import org.apache.arrow.gandiva.exceptions.GandivaException;
-import org.apache.arrow.gandiva.expression.Condition;
-import org.apache.arrow.gandiva.expression.TreeBuilder;
-import org.apache.arrow.gandiva.expression.TreeNode;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.arrow.vector.ipc.SeekableReadChannel;
-import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
@@ -56,21 +50,15 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.lang.reflect.Type;
-import java.util.ArrayList;
 import java.util.List;
 
-import static java.lang.Double.parseDouble;
-import static java.lang.Float.parseFloat;
-import static java.lang.Integer.parseInt;
-import static java.lang.Long.parseLong;
 import static java.util.Objects.requireNonNull;
 
 /**
  * Table backed by an Apache Arrow file.
  *
- * <p>Reads data from an Arrow IPC file on disk. Simple projections read
- * directly from Arrow value-vectors, and filters are pushed down via the
- * Gandiva expression compiler.
+ * <p>Reads data from an Arrow IPC file on disk. Projections and filters read
+ * directly from Arrow value-vectors.
  *
  * <p>Implements {@link TranslatableTable} so that it can be converted into
  * an {@link ArrowTableScan} for query planning, and {@link QueryableTable}
@@ -115,39 +103,6 @@ public class ArrowTable extends AbstractTable
   public Enumerable<Object> query(DataContext root, ImmutableIntList fields,
       List<List<List<String>>> conditions) {
     requireNonNull(fields, "fields");
-    final Filter filter;
-
-    if (conditions.isEmpty()) {
-      filter = null;
-    } else {
-      final List<TreeNode> conjuncts = new ArrayList<>(conditions.size());
-      for (List<List<String>> orGroup : conditions) {
-        final List<TreeNode> disjuncts = new ArrayList<>(orGroup.size());
-        for (List<String> conditionParts : orGroup) {
-          disjuncts.add(
-              convertConditionToGandiva(
-                  ConditionToken.fromTokenList(conditionParts)));
-        }
-        if (disjuncts.size() == 1) {
-          conjuncts.add(disjuncts.get(0));
-        } else {
-          conjuncts.add(TreeBuilder.makeOr(disjuncts));
-        }
-      }
-      final Condition filterCondition;
-      if (conjuncts.size() == 1) {
-        filterCondition = TreeBuilder.makeCondition(conjuncts.get(0));
-      } else {
-        filterCondition =
-            TreeBuilder.makeCondition(TreeBuilder.makeAnd(conjuncts));
-      }
-
-      try {
-        filter = Filter.make(schema, filterCondition);
-      } catch (GandivaException e) {
-        throw Util.toUnchecked(e);
-      }
-    }
 
     FileInputStream fis = null;
     try {
@@ -158,7 +113,7 @@ public class ArrowTable extends AbstractTable
       final FileInputStream fisRef = fis;
       final Runnable onClose = () -> closeSilently(fisRef);
       fis = null; // ownership transferred to onClose
-      return new ArrowEnumerable(reader, fields, null, filter, onClose);
+      return new ArrowEnumerable(reader, fields, conditions, schema, onClose);
     } catch (IOException e) {
       throw Util.toUnchecked(e);
     } finally {
@@ -197,55 +152,12 @@ public class ArrowTable extends AbstractTable
     return builder.build();
   }
 
-  /** Converts a single {@link ConditionToken} into a Gandiva {@link TreeNode}. */
-  private TreeNode convertConditionToGandiva(ConditionToken token) {
-    final List<TreeNode> treeNodes = new ArrayList<>(2);
-    treeNodes.add(
-        TreeBuilder.makeField(schema.getFields()
-            .get(
-                schema.getFields().indexOf(
-                schema.findField(token.fieldName)))));
-
-    if (token.isBinary()) {
-      treeNodes.add(
-          makeLiteralNode(
-              requireNonNull(token.value, "value"),
-              requireNonNull(token.valueType, "valueType")));
-    }
-
-    return TreeBuilder.makeFunction(
-        token.operator, treeNodes, new ArrowType.Bool());
-  }
-
   /** Closes an {@link AutoCloseable} without throwing. */
   private static void closeSilently(AutoCloseable closeable) {
     try {
       closeable.close();
     } catch (Exception e) {
       // ignore
-    }
-  }
-
-  private static TreeNode makeLiteralNode(String literal, String type) {
-    if (type.startsWith("decimal")) {
-      String[] typeParts =
-          type.substring(type.indexOf('(') + 1, type.indexOf(')')).split(",");
-      int precision = parseInt(typeParts[0]);
-      int scale = parseInt(typeParts[1]);
-      return TreeBuilder.makeDecimalLiteral(literal, precision, scale);
-    } else if (type.equals("integer")) {
-      return TreeBuilder.makeLiteral(parseInt(literal));
-    } else if (type.equals("long")) {
-      return TreeBuilder.makeLiteral(parseLong(literal));
-    } else if (type.equals("float")) {
-      return TreeBuilder.makeLiteral(parseFloat(literal));
-    } else if (type.equals("double")) {
-      return TreeBuilder.makeLiteral(parseDouble(literal));
-    } else if (type.equals("string")) {
-      return TreeBuilder.makeStringLiteral(literal.substring(1, literal.length() - 1));
-    } else {
-      throw new IllegalArgumentException("Invalid literal " + literal
-          + ", type " + type);
     }
   }
 

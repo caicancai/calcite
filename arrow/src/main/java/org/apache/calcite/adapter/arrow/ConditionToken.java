@@ -25,7 +25,7 @@ import java.util.List;
 import static java.util.Objects.requireNonNull;
 
 /**
- * A structured representation of a single Gandiva predicate condition.
+ * A structured representation of a single Arrow predicate condition.
  *
  * <p>A condition is either unary (e.g. {@code IS NULL}) or binary
  * (e.g. {@code =}, {@code <}). Unary conditions have a field name

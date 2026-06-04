@@ -41,7 +41,7 @@ import static org.apache.calcite.util.DateTimeStringUtils.getDateFormatter;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Translates a {@link RexNode} expression to Gandiva predicate tokens.
+ * Translates a {@link RexNode} expression to Arrow predicate tokens.
  */
 class ArrowTranslator {
   final RexBuilder rexBuilder;
@@ -65,7 +65,7 @@ class ArrowTranslator {
    *
    * <p>If exceeded, {@link RexUtil#toCnf(RexBuilder, int, RexNode)} returns
    * the original expression unchanged, which may cause the subsequent
-   * translation to Gandiva predicates to fail with an
+   * translation to Arrow predicates to fail with an
    * {@link UnsupportedOperationException}. When invoked by the Arrow adapter
    * module, the exception is caught and the plan falls back to
    * an Enumerable convention. */

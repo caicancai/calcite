@@ -39,10 +39,8 @@ import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Util;
 
 import org.apache.arrow.gandiva.evaluator.Filter;
-import org.apache.arrow.gandiva.evaluator.Projector;
 import org.apache.arrow.gandiva.exceptions.GandivaException;
 import org.apache.arrow.gandiva.expression.Condition;
-import org.apache.arrow.gandiva.expression.ExpressionTree;
 import org.apache.arrow.gandiva.expression.TreeBuilder;
 import org.apache.arrow.gandiva.expression.TreeNode;
 import org.apache.arrow.memory.RootAllocator;
@@ -70,8 +68,9 @@ import static java.util.Objects.requireNonNull;
 /**
  * Table backed by an Apache Arrow file.
  *
- * <p>Reads data from an Arrow IPC file on disk and supports projection
- * and filter push-down via the Gandiva expression compiler.
+ * <p>Reads data from an Arrow IPC file on disk. Simple projections read
+ * directly from Arrow value-vectors, and filters are pushed down via the
+ * Gandiva expression compiler.
  *
  * <p>Implements {@link TranslatableTable} so that it can be converted into
  * an {@link ArrowTableScan} for query planning, and {@link QueryableTable}
@@ -116,15 +115,11 @@ public class ArrowTable extends AbstractTable
   public Enumerable<Object> query(DataContext root, ImmutableIntList fields,
       List<List<List<String>>> conditions) {
     requireNonNull(fields, "fields");
-    final Projector projector;
     final Filter filter;
 
     if (conditions.isEmpty()) {
       filter = null;
-      projector = makeProjector(fields);
     } else {
-      projector = null;
-
       final List<TreeNode> conjuncts = new ArrayList<>(conditions.size());
       for (List<List<String>> orGroup : conditions) {
         final List<TreeNode> disjuncts = new ArrayList<>(orGroup.size());
@@ -163,7 +158,7 @@ public class ArrowTable extends AbstractTable
       final FileInputStream fisRef = fis;
       final Runnable onClose = () -> closeSilently(fisRef);
       fis = null; // ownership transferred to onClose
-      return new ArrowEnumerable(reader, fields, projector, filter, onClose);
+      return new ArrowEnumerable(reader, fields, null, filter, onClose);
     } catch (IOException e) {
       throw Util.toUnchecked(e);
     } finally {
@@ -200,37 +195,6 @@ public class ArrowTable extends AbstractTable
           ArrowFieldTypeFactory.toType(field, typeFactory));
     }
     return builder.build();
-  }
-
-  private @Nullable Projector makeProjector(ImmutableIntList fields) {
-    if (containsListField(fields)) {
-      // Returning null selects ArrowEnumerable's direct vector-read path.
-      // Use that path for list fields because Gandiva does not support identity
-      // projection expressions over Arrow List vectors.
-      return null;
-    }
-
-    final List<ExpressionTree> expressionTrees = new ArrayList<>();
-    for (int fieldOrdinal : fields) {
-      Field field = schema.getFields().get(fieldOrdinal);
-      TreeNode node = TreeBuilder.makeField(field);
-      expressionTrees.add(TreeBuilder.makeExpression(node, field));
-    }
-    try {
-      return Projector.make(schema, expressionTrees);
-    } catch (GandivaException e) {
-      throw Util.toUnchecked(e);
-    }
-  }
-
-  private boolean containsListField(ImmutableIntList fields) {
-    for (int fieldOrdinal : fields) {
-      if (schema.getFields().get(fieldOrdinal).getType().getTypeID()
-          == ArrowType.ArrowTypeID.List) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /** Converts a single {@link ConditionToken} into a Gandiva {@link TreeNode}. */
